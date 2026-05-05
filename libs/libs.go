@@ -22,10 +22,6 @@ const (
 	screenNum          = uint(0)
 )
 
-var (
-	today = time.Now().Format(time.DateOnly)
-)
-
 func VerifyResolution(res int) string {
 	switch res {
 	case 1366:
@@ -67,8 +63,45 @@ func createImageDirectory(path string) {
 	if os.IsNotExist(err) {
 		err := os.MkdirAll(path, os.ModePerm)
 		if err != nil {
-			log.Fatalf("Failed to create directory with error %s", err)
+			log.Fatalf("Failed to create image directory with error %s", err)
+			os.Exit(1)
 		}
+	}
+}
+
+func createCacheDir(cacheDir string) {
+	_, err := os.Stat(cacheDir)
+
+	if os.IsNotExist(err) {
+		err := os.MkdirAll(cacheDir, os.ModePerm)
+		if err != nil {
+			log.Fatalf("Failed to create cache directory with error %s", err)
+			os.Exit(1)
+		}
+	}
+}
+
+func readCacheFileData(cacheFile string) *models.Bing {
+	_, err := os.Stat(cacheFile)
+
+	if os.IsNotExist(err) {
+		return nil
+	} else {
+		file, err := os.ReadFile(cacheFile)
+		if err != nil {
+			log.Fatalf("Failed to read cache file with error %s", err)
+			return nil
+		}
+		log.Println("Cache file exists")
+		var data models.Bing
+		err = json.Unmarshal(file, &data)
+
+		if err != nil {
+			log.Fatalf("Failed to process cache file with error %s", err)
+			return nil
+		}
+
+		return &data
 	}
 }
 
@@ -103,101 +136,126 @@ func getResponseBody(client *http.Client, url string) []byte {
 	return nil
 }
 
-func SaveImage(apiURL string, bingURL, path string, resolution string, screenNum uint, client *http.Client) {
+func SaveImage(apiURL string, bingURL, path string, resolution string, screenNum uint, client *http.Client, today string, cacheDir string) {
 
-	// get current wallpaper
-	conn := getSessionBus()
-	busObj := conn.Object("org.kde.plasmashell", "/PlasmaShell")
+	cacheFile := fmt.Sprintf("%s/potd_%s.json", cacheDir, strings.ReplaceAll(today, "-", ""))
+	busObj := GetDbusObject("org.kde.plasmashell", "/PlasmaShell")
 
-	currentWallpaper := getCurrentWallpaper(busObj, screenNum)
+	createCacheDir(cacheDir)
 
-	if len(currentWallpaper) > 0 {
-		f, err := os.Stat(strings.ReplaceAll(currentWallpaper, "file://", ""))
+	if data := readCacheFileData(cacheFile); data == nil {
+
+		createImageDirectory(path)
+		responseBody := getResponseBody(client, apiURL)
+
+		var jsonResponse models.Bing
+
+		err := json.Unmarshal(responseBody, &jsonResponse)
 		if err != nil {
 			log.Fatal(err)
 			os.Exit(1)
 		}
+		if len(jsonResponse.Images) > 0 {
+			// only 1 result
+			if len(jsonResponse.Images[0].Urlbase) > 0 && len(jsonResponse.Images[0].Title) > 0 {
+				url := fmt.Sprintf("%s%s_%s.jpg", bingURL, jsonResponse.Images[0].Urlbase, resolution)
+				if len(url) > 0 {
+					invalidChars := []rune{':', '?', '!', '\'', ' ', '`', '¬', '@', '#', ',', '\'', '\u0027', ';', ' '}
 
-		modDate := f.ModTime().Format(time.DateOnly)
+					log.Printf("Title = %s\n", jsonResponse.Images[0].Title)
+					log.Printf("Copyright = %s\n", jsonResponse.Images[0].Copyright)
 
-		if modDate == today {
-			log.Println("Wallpaper already set")
-			os.Exit(0)
-		}
+					title := strings.ToLower(jsonResponse.Images[0].Title)
 
-		currentWallpaper = (currentWallpaper[strings.LastIndex(currentWallpaper, "/")+1:])
-	}
-
-	createImageDirectory(path)
-	responseBody := getResponseBody(client, apiURL)
-
-	var jsonResponse models.Bing
-	err := json.Unmarshal(responseBody, &jsonResponse)
-	if err != nil {
-		log.Fatal(err)
-		os.Exit(1)
-	}
-	if len(jsonResponse.Images) > 0 {
-		// only 1 result
-		if len(jsonResponse.Images[0].Urlbase) > 0 && len(jsonResponse.Images[0].Title) > 0 {
-			url := fmt.Sprintf("%s%s_%s.jpg", bingURL, jsonResponse.Images[0].Urlbase, resolution)
-			if len(url) > 0 {
-				invalidChars := []rune{':', '?', '!', '\'', ' ', '`', '¬', '@', '#', ',', '\'', '\u0027', ';', ' '}
-
-				log.Printf("Title = %s\n", jsonResponse.Images[0].Title)
-				log.Printf("Copyright = %s\n", jsonResponse.Images[0].Copyright)
-
-				title := strings.ToLower(jsonResponse.Images[0].Title)
-
-				for _, c := range invalidChars {
-					if strings.ContainsRune(title, c) {
-						title = strings.ReplaceAll(title, string(c), "_")
+					for _, c := range invalidChars {
+						if strings.ContainsRune(title, c) {
+							title = strings.ReplaceAll(title, string(c), "_")
+						}
 					}
+
+					jpegFile := path + "/" + strings.ReplaceAll(today, "-", "") + "_" + strings.ReplaceAll(title, "__", "_") + "_" + resolution + ".jpg"
+
+					jsonResponse.Imagepath = jpegFile
+
+					log.Printf("Image = %s\n", jpegFile)
+
+					_, err := os.Stat(jpegFile)
+					if os.IsNotExist(err) {
+						//create file
+						file, err := os.Create(jpegFile)
+
+						if err != nil {
+							panic(err)
+						}
+
+						response := getResponseBody(client, url)
+
+						_, err = file.Write(response)
+
+						if err != nil {
+							log.Fatalf("Error writing file: %s", err)
+							os.Exit(1)
+						}
+
+						defer file.Close()
+
+						writeCache(cacheFile, &jsonResponse)
+
+					} else {
+						log.Printf("%s already exists\n", jpegFile)
+						writeCache(cacheFile, &jsonResponse)
+					}
+
+					setWallpaper(busObj, screenNum, fmt.Sprintf("file://%s", jpegFile))
+
 				}
-
-				jpegFile := path + "/" + strings.ReplaceAll(today, "-", "") + "_" + strings.ReplaceAll(title, "__", "_") + "_" + resolution + ".jpg"
-
-				log.Printf("Image = %s\n", jpegFile)
-
-				_, err := os.Stat(jpegFile)
-				if os.IsNotExist(err) {
-					//create file
-					file, err := os.Create(jpegFile)
-
-					if err != nil {
-						panic(err)
-					}
-
-					response := getResponseBody(client, url)
-
-					_, err = file.Write(response)
-
-					if err != nil {
-						log.Fatalf("Error writing file: %s", err)
-						os.Exit(1)
-					}
-
-					defer file.Close()
-
-				} else {
-					log.Printf("%s already exists\n", path)
-				}
-
-				setWallpaper(busObj, screenNum, fmt.Sprintf("file://%s", jpegFile))
-
 			}
+		} else {
+			log.Fatalf("The response returned has no images\n")
+			log.Fatal(jsonResponse)
+			os.Exit(1)
+
 		}
 	} else {
-		log.Fatalf("The response returned has no images\n")
-		log.Fatal(jsonResponse)
-		os.Exit(1)
+		// read cache file
+		log.Printf("Image = %s\n", data.Images[0].Title)
+		log.Printf("Startdate = %s\n", data.Images[0].Startdate)
+		log.Printf("Copyright = %s\n", data.Images[0].Copyright)
+		log.Printf("Imagepath = %s\n", data.Imagepath)
+
+		if _, err := os.Stat(data.Imagepath); err == nil {
+			setWallpaper(busObj, screenNum, fmt.Sprintf("file://%s", data.Imagepath))
+		}
 
 	}
-
-	defer conn.Close()
 }
 
-func getCurrentWallpaper(busObj dbus.BusObject, screenNum uint) string {
+func writeCache(cacheFile string, jsonResponse *models.Bing) {
+	_, errF := os.Stat(cacheFile)
+
+	if os.IsNotExist(errF) {
+		file, err := os.Create(cacheFile)
+
+		if err != nil {
+			log.Fatalf("Failed to create cache file with error %s", err)
+			os.Exit(1)
+		}
+		defer file.Close()
+
+		encoder := json.NewEncoder(file)
+		if err := encoder.Encode(jsonResponse); err != nil {
+			log.Fatal(err)
+		}
+
+	}
+}
+
+func GetDbusObject(dbusInterface string, dbusMethod string) dbus.BusObject {
+	conn := getSessionBus()
+	return conn.Object(dbusInterface, dbus.ObjectPath(dbusMethod))
+}
+
+func GetCurrentWallpaper(busObj dbus.BusObject, screenNum uint) string {
 	dbusCall := busObj.Call(wallpaperMethod, 0, screenNum)
 
 	if dbusCall.Err != nil {
@@ -217,6 +275,7 @@ func getCurrentWallpaper(busObj dbus.BusObject, screenNum uint) string {
 
 func setWallpaper(busObj dbus.BusObject, screenNum uint, file string) {
 
+	log.Println("Setting wallpaper")
 	parameters := map[string]dbus.Variant{}
 
 	parameters["Image"] = dbus.MakeVariant(file)
@@ -245,7 +304,7 @@ func WaitForConnection() bool {
 
 		_, err := net.LookupIP("one.one.one.one")
 		if err != nil {
-			time.Sleep(time.Millisecond * 500)
+			time.Sleep(time.Millisecond * 250)
 		} else if count == timeout {
 			return false
 		} else {

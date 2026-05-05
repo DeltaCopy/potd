@@ -1,7 +1,8 @@
 package models
 
 type Bing struct {
-	Images []struct {
+	Imagepath string `json:"imagepath"`
+	Images    []struct {
 		Startdate     string `json:"startdate"`
 		Fullstartdate string `json:"fullstartdate"`
 		Enddate       string `json:"enddate"`
