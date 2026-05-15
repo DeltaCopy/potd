@@ -2,10 +2,12 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"potd/libs"
+	"strings"
 	"time"
 )
 
@@ -40,21 +42,42 @@ func main() {
 
 	cacheDir := homeDir + "/.cache/potd"
 
-	connected := libs.WaitForConnection()
+	libs.CreateCacheDir(cacheDir)
 
-	if connected {
-		if res := libs.VerifyResolution(resolution); res != "ERROR" && len(path) > 0 {
+	cacheFile := fmt.Sprintf("%s/potd_%s.json", cacheDir, strings.ReplaceAll(today, "-", ""))
 
-			client := http.Client{}
-			libs.SaveImage(bingAPIURL, bingURL, path, res, screenNum, &client, today, cacheDir)
+	data := libs.ReadCacheFileData(cacheFile)
 
-		} else {
-			flag.PrintDefaults()
+	if data != nil {
 
+		// read cache file
+		log.Printf("Image = %s\n", data.Images[0].Title)
+		log.Printf("Startdate = %s\n", data.Images[0].Startdate)
+		log.Printf("Copyright = %s\n", data.Images[0].Copyright)
+		log.Printf("Imagepath = %s\n", data.Imagepath)
+
+		if _, err := os.Stat(data.Imagepath); err == nil {
+			busObj := libs.GetDbusObject("org.kde.plasmashell", "/PlasmaShell")
+
+			libs.SetWallpaper(busObj, screenNum, fmt.Sprintf("file://%s", data.Imagepath))
 		}
 	} else {
-		log.Fatal("Failed to set wallpaper, connection timed out.")
-		os.Exit(1)
+		connected := libs.WaitForConnection()
+
+		if connected {
+			if res := libs.VerifyResolution(resolution); res != "ERROR" && len(path) > 0 {
+
+				client := http.Client{}
+				libs.SaveImage(bingAPIURL, bingURL, path, res, screenNum, &client, today, cacheDir)
+
+			} else {
+				flag.PrintDefaults()
+
+			}
+		} else {
+			log.Fatal("Failed to set wallpaper, connection timed out.")
+			os.Exit(1)
+		}
 	}
 
 }

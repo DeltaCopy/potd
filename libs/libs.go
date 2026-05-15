@@ -69,7 +69,7 @@ func createImageDirectory(path string) {
 	}
 }
 
-func createCacheDir(cacheDir string) {
+func CreateCacheDir(cacheDir string) {
 	_, err := os.Stat(cacheDir)
 
 	if os.IsNotExist(err) {
@@ -81,9 +81,8 @@ func createCacheDir(cacheDir string) {
 	}
 }
 
-func readCacheFileData(cacheFile string) *models.Bing {
+func ReadCacheFileData(cacheFile string) *models.Bing {
 	_, err := os.Stat(cacheFile)
-
 	if os.IsNotExist(err) {
 		return nil
 	} else {
@@ -92,7 +91,6 @@ func readCacheFileData(cacheFile string) *models.Bing {
 			log.Fatalf("Failed to read cache file with error %s", err)
 			return nil
 		}
-		log.Println("Cache file exists")
 		var data models.Bing
 		err = json.Unmarshal(file, &data)
 
@@ -100,6 +98,8 @@ func readCacheFileData(cacheFile string) *models.Bing {
 			log.Fatalf("Failed to process cache file with error %s", err)
 			return nil
 		}
+
+		log.Printf("Reading cache file = %s\n", cacheFile)
 
 		return &data
 	}
@@ -141,9 +141,7 @@ func SaveImage(apiURL string, bingURL, path string, resolution string, screenNum
 	cacheFile := fmt.Sprintf("%s/potd_%s.json", cacheDir, strings.ReplaceAll(today, "-", ""))
 	busObj := GetDbusObject("org.kde.plasmashell", "/PlasmaShell")
 
-	createCacheDir(cacheDir)
-
-	if data := readCacheFileData(cacheFile); data == nil {
+	if data := ReadCacheFileData(cacheFile); data == nil {
 
 		createImageDirectory(path)
 		responseBody := getResponseBody(client, apiURL)
@@ -206,7 +204,7 @@ func SaveImage(apiURL string, bingURL, path string, resolution string, screenNum
 						writeCache(cacheFile, &jsonResponse)
 					}
 
-					setWallpaper(busObj, screenNum, fmt.Sprintf("file://%s", jpegFile))
+					SetWallpaper(busObj, screenNum, fmt.Sprintf("file://%s", jpegFile))
 
 				}
 			}
@@ -224,7 +222,7 @@ func SaveImage(apiURL string, bingURL, path string, resolution string, screenNum
 		log.Printf("Imagepath = %s\n", data.Imagepath)
 
 		if _, err := os.Stat(data.Imagepath); err == nil {
-			setWallpaper(busObj, screenNum, fmt.Sprintf("file://%s", data.Imagepath))
+			SetWallpaper(busObj, screenNum, fmt.Sprintf("file://%s", data.Imagepath))
 		}
 
 	}
@@ -273,7 +271,7 @@ func GetCurrentWallpaper(busObj dbus.BusObject, screenNum uint) string {
 
 }
 
-func setWallpaper(busObj dbus.BusObject, screenNum uint, file string) {
+func SetWallpaper(busObj dbus.BusObject, screenNum uint, file string) {
 
 	log.Println("Setting wallpaper")
 	parameters := map[string]dbus.Variant{}
